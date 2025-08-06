@@ -1,0 +1,1198 @@
+---
+title: "Anomally Tests"
+author: "David Liu"
+date: "2025-07-10"
+output: word_document
+---
+
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Step 1: Count frequency of each DEST_CITY_MARKET_ID
+freq_table <- table(df$DEST_CITY_MARKET_ID)
+
+# Step 2: Compute 5th percentile threshold
+threshold <- quantile(freq_table, 0.05)
+
+# Step 3: Identify rare city market IDs
+rare_ids <- names(freq_table[freq_table < threshold])
+rare_ids <- as.numeric(rare_ids)
+
+# Step 4: Subset data to include only rare destinations
+rare_df <- df[df$DEST_CITY_MARKET_ID %in% rare_ids, ]
+
+# Step 5: Group by ID and city_dest, then count occurrences
+library(dplyr)
+
+city_freq <- rare_df %>%
+  group_by(DEST_CITY_MARKET_ID, city_dest) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count))
+
+# Step 6: Bar plot
+barplot(city_freq$count,
+        names.arg = city_freq$city_dest,
+        las = 2,
+        cex.names = 0.7,
+        col = "tomato",
+        main = "Flight Frequencies for Rare Destination Cities",
+        ylab = "Count")
+
+# Step 7: Print the table
+print(city_freq)
+
+names(df)
+```
+
+```{r}
+# Load data
+df <- read.csv("Flights_With_Distance.csv")
+
+# Define a function to compute IQR info
+iqr_outlier_info <- function(column, name) {
+  Q1 <- quantile(column, 0.25, na.rm = TRUE)
+  Q3 <- quantile(column, 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  
+  lower_bound <- Q1 - 3 * IQR_val
+  upper_bound <- Q3 + 3 * IQR_val
+  
+  outliers <- column[column < lower_bound | column > upper_bound]
+  
+  cat("Variable:", name, "\n")
+  cat("  Q1:", Q1, "\n")
+  cat("  Q3:", Q3, "\n")
+  cat("  IQR:", IQR_val, "\n")
+  cat("  Lower bound:", lower_bound, "\n")
+  cat("  Upper bound:", upper_bound, "\n")
+  cat("  Number of outliers:", length(outliers), "\n\n")
+}
+
+# Apply to Distance_km and Pop_Population
+iqr_outlier_info(df$Distance_km, "Distance_km")
+iqr_outlier_info(df$Pop_Population, "Pop_Population")
+
+```
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+options(scipen = 999)
+
+# Step 1: Remove missing values
+population <- na.omit(df$Pop_Population)
+
+# Step 2: Compute IQR components
+Q1 <- quantile(population, 0.25)
+Q3 <- quantile(population, 0.75)
+IQR_value <- Q3 - Q1
+
+# Step 3: Define bounds
+lower_bound <- Q1 - 1.5 * IQR_value
+upper_bound <- Q3 + 1.5 * IQR_value
+
+# Step 4: Identify outliers
+outliers <- population[population < lower_bound | population > upper_bound]
+
+# Step 5: Print results
+cat("Q1:", Q1, "\nQ3:", Q3, "\nIQR:", IQR_value, "\n")
+cat("Lower bound:", lower_bound, "\nUpper bound:", upper_bound, "\n")
+cat("Number of outliers:", length(outliers), "\n")
+print(outliers)
+
+# Step 6: Plot boxplot
+boxplot(population,
+        main = "Which Cities' Populations Are Outlying?",
+        ylab = "Population")
+
+# Step 7: Plot histogram with density
+hist(population,
+     breaks = 50,
+     probability = TRUE,
+     col = "lightblue",
+     main = "Distribution of Pop_Population",
+     xlab = "Population")
+lines(density(population), col = "darkblue", lwd = 2)
+```
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Step 1: Select and clean relevant numeric variables
+vars <- df[, c("DEP_DELAY", "ARR_DELAY", "Distance_km")]
+vars <- na.omit(vars)  # remove rows with NAs
+
+# Step 2: Compute Mahalanobis distance
+center <- colMeans(vars)
+cov_matrix <- cov(vars)
+mahal_dist <- mahalanobis(vars, center, cov_matrix)
+
+# Step 3: Determine threshold for outliers (e.g., 99th percentile)
+threshold <- qchisq(0.99, df = ncol(vars))
+
+# Step 4: Identify outlier indices
+outlier_indices <- which(mahal_dist > threshold)
+
+# Step 5: Output results
+cat("Number of multivariate outliers:", length(outlier_indices), "\n")
+
+# Optional: View the rows in the original dataset
+outlier_data <- df[as.numeric(rownames(vars))[outlier_indices], ]
+print(outlier_data)
+
+# Step 6: Visualize distances
+hist(mahal_dist,
+     breaks = 50,
+     main = "Mahalanobis Distance Distribution",
+     xlab = "Mahalanobis Distance",
+     col = "lightblue")
+abline(v = threshold, col = "red", lwd = 2, lty = 2)
+legend("topright", legend = "99% threshold", col = "red", lty = 2, lwd = 2)
+# Print the multivariate center
+cat("Multivariate Center (Means):\n")
+print(center)
+
+```
+```{r}
+# Load required package
+library(dbscan)
+library(dplyr)
+
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+# Step 1: Select and clean relevant columns
+vars <- df[, c("DEP_DELAY", "ARR_DELAY", "DEST_LAT", "DEST_LONG")]
+vars <- na.omit(vars)
+
+# Step 2: Standardize the data (important for DBSCAN)
+vars_scaled <- scale(vars)
+
+# Step 3: Run DBSCAN
+# eps = neighborhood radius; minPts = minimum points to form a cluster
+# These values often need tuning
+db <- dbscan(vars_scaled, eps = 0.5, minPts = 10)
+
+# Step 4: Attach cluster labels back to data
+vars$cluster <- db$cluster  # cluster 0 = noise (outliers)
+
+# Step 5: Summary
+table(db$cluster)
+
+# Step 6: Visualize (using first two principal components for simplicity)
+library(ggplot2)
+library(factoextra)
+
+# Create a PCA for 2D visualization
+pca_res <- prcomp(vars_scaled, center = TRUE, scale. = TRUE)
+pca_df <- as.data.frame(pca_res$x[, 1:2])
+pca_df$cluster <- factor(db$cluster)
+
+ggplot(pca_df, aes(PC1, PC2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("0" = "red", "1" = "blue", "2" = "green", "3" = "orange")) +
+  theme_minimal() +
+  labs(title = "DBSCAN Clustering of Delay + Geospatial Features",
+       color = "Cluster (0 = Outlier)")
+
+```
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Remove rows with missing departure delay or route info
+df_clean <- df[!is.na(df$DEP_DELAY) & !is.na(df$city_origin) & !is.na(df$city_dest), ]
+
+# Create a route ID
+df_clean$route <- paste(df_clean$city_origin, "to", df_clean$city_dest)
+
+# Group by route and calculate mean and standard deviation of delay
+library(dplyr)
+
+route_stats <- df_clean %>%
+  group_by(route) %>%
+  summarise(
+    mean_delay = mean(DEP_DELAY),
+    sd_delay = sd(DEP_DELAY),
+    count = n(),
+    .groups = "drop"
+  )
+
+# Join stats back to the original data
+df_joined <- df_clean %>%
+  left_join(route_stats, by = "route")
+
+# Flag anomalies: delay > mean + 2*sd or < mean - 2*sd
+df_joined$anomaly <- abs(df_joined$DEP_DELAY - df_joined$mean_delay) > 2 * df_joined$sd_delay
+
+# Optional: View all anomalous flights
+anomalies <- df_joined[df_joined$anomaly == TRUE, ]
+
+# Summary
+cat("Total number of flights:", nrow(df_joined), "\n")
+cat("Number of anomalous flights:", nrow(anomalies), "\n")
+
+# View top anomalies
+head(anomalies)
+
+```
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Remove rows with missing departure delay or route info
+df_clean <- df[!is.na(df$DEP_DELAY) & !is.na(df$city_origin) & !is.na(df$city_dest), ]
+
+# Create a route ID
+df_clean$route <- paste(df_clean$city_origin, "to", df_clean$city_dest)
+
+# Group by route and calculate mean and standard deviation of delay
+library(dplyr)
+
+route_stats <- df_clean %>%
+  group_by(route) %>%
+  summarise(
+    mean_delay = mean(DEP_DELAY),
+    sd_delay = sd(DEP_DELAY),
+    count = n(),
+    .groups = "drop"
+  )
+
+# Join stats back to the original data
+df_joined <- df_clean %>%
+  left_join(route_stats, by = "route")
+
+# Flag anomalies: delay > mean ± 2*sd
+df_joined$anomaly <- abs(df_joined$DEP_DELAY - df_joined$mean_delay) > 2 * df_joined$sd_delay
+
+# Subset anomalies
+anomalies <- df_joined[df_joined$anomaly == TRUE, ]
+
+# Compute absolute deviation from the mean for anomalies
+anomalies$deviation_from_mean <- abs(anomalies$DEP_DELAY - anomalies$mean_delay)
+
+# Compute average deviation
+avg_deviation <- mean(anomalies$deviation_from_mean, na.rm = TRUE)
+
+
+# Output summary
+cat("Total number of flights:", nrow(df_joined), "\n")
+cat("Number of anomalous flights:", nrow(anomalies), "\n")
+cat("Average deviation from mean (for anomalies):", round(avg_deviation, 2), "minutes\n")
+
+# Optional: View top anomalies
+head(anomalies)
+
+```
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(dbscan)
+library(scales)
+
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Clean and create route variable
+df_clean <- df %>%
+  filter(!is.na(DEP_DELAY), !is.na(city_origin), !is.na(city_dest), !is.na(Distance_km)) %>%
+  mutate(route = paste(city_origin, "to", city_dest))
+
+# Group by route to get mean and sd of delay
+route_stats <- df_clean %>%
+  group_by(route) %>%
+  summarise(
+    mean_delay = mean(DEP_DELAY),
+    sd_delay = sd(DEP_DELAY),
+    .groups = "drop"
+  )
+
+# Join and flag anomalies
+df_joined <- df_clean %>%
+  left_join(route_stats, by = "route") %>%
+  mutate(anomaly = abs(DEP_DELAY - mean_delay) > 2 * sd_delay)
+
+# Filter anomalies
+anomalies <- df_joined %>%
+  filter(anomaly == TRUE)
+
+# Prepare data for DBSCAN
+dbscan_data <- anomalies %>%
+  select(Distance_km, DEP_DELAY) %>%
+  na.omit() %>%
+  scale()
+
+# Run DBSCAN
+set.seed(42)
+db <- dbscan(dbscan_data, eps = 0.3, minPts = 10)
+
+# Add cluster labels
+anomalies$cluster <- as.factor(db$cluster)
+
+# Visualize
+ggplot(anomalies, aes(x = Distance_km, y = DEP_DELAY, color = cluster)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "DBSCAN Clustering on Anomalous Flights",
+    subtitle = "Distance vs Delay (Anomalies Only)",
+    x = "Distance (km)",
+    y = "Departure Delay (min)",
+    color = "Cluster"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Remove rows with NA in distance or delay
+df_clean <- df[!is.na(df$Distance_km) & !is.na(df$DEP_DELAY), ]
+
+# Step 1: Fit linear regression
+model <- lm(DEP_DELAY ~ Distance_km, data = df_clean)
+
+# Step 2: Get residuals and their standard deviation
+df_clean$residual <- resid(model)
+resid_sd <- sd(df_clean$residual, na.rm = TRUE)
+
+# Step 3: Flag anomalies (outside ±2 * SD of residuals)
+df_clean$anomaly <- abs(df_clean$residual) > 2 * resid_sd
+
+# Step 4: Summary
+cat("Number of observations:", nrow(df_clean), "\n")
+cat("Number of anomalies:", sum(df_clean$anomaly), "\n")
+cat("Residual standard deviation:", round(resid_sd, 2), "\n")
+
+# Optional: View some anomalies
+head(df_clean[df_clean$anomaly == TRUE, ])
+
+# Optional: Plot
+library(ggplot2)
+ggplot(df_clean, aes(x = Distance_km, y = DEP_DELAY)) +
+  geom_point(aes(color = anomaly), alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+  labs(title = "Anomaly Detection via Regression: Distance vs Delay",
+       subtitle = "Red points are more than 2 SD away from the regression line",
+       x = "Distance (km)", y = "Departure Delay (min)") +
+  theme_minimal()
+
+```
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Clean the data
+df_clean <- df[!is.na(df$Distance_km) & !is.na(df$DEP_DELAY), ]
+
+# Fit baseline model
+model <- lm(DEP_DELAY ~ Distance_km, data = df_clean)
+
+# Residuals and SD
+df_clean$residual <- resid(model)
+resid_sd <- sd(df_clean$residual, na.rm = TRUE)
+
+# Flag anomalies (> 2 SD from mean residual)
+df_clean$anomaly <- abs(df_clean$residual) > 2 * resid_sd
+
+# Subset: high-delay flights
+high_delay_df <- df_clean[df_clean$DEP_DELAY > 500, ]
+
+# Fit second model for DEP_DELAY > 500
+high_delay_model <- lm(DEP_DELAY ~ Distance_km, data = high_delay_df)
+
+# Plot everything
+library(ggplot2)
+
+ggplot(df_clean, aes(x = Distance_km, y = DEP_DELAY)) +
+  # All points: color by anomaly
+  geom_point(aes(color = anomaly), alpha = 0.4) +
+  
+  # Original regression line
+  geom_smooth(method = "lm", se = FALSE, color = "blue", linetype = "solid") +
+
+  # High-delay regression line (dashed, purple)
+  geom_smooth(data = high_delay_df, aes(x = Distance_km, y = DEP_DELAY),
+              method = "lm", se = FALSE, color = "purple", linetype = "dashed") +
+
+  # Label
+  scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+  labs(
+    title = "Regression-Based Anomaly Detection: Distance vs Delay",
+    subtitle = "Blue = overall trend, Purple dashed = trend for DEP_DELAY > 500 min",
+    x = "Distance (km)", y = "Departure Delay (min)", color = "Anomaly"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Load ggplot2
+library(ggplot2)
+
+# -----------------------------
+# PLOT 1: DEP_DELAY vs ARR_DELAY
+# -----------------------------
+ggplot(df, aes(x = DEP_DELAY, y = ARR_DELAY)) +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  labs(
+    title = "Scatterplot: Departure Delay vs Arrival Delay",
+    x = "Departure Delay (min)",
+    y = "Arrival Delay (min)"
+  ) +
+  theme_minimal()
+
+# -----------------------------
+# PLOT 2: ARR_DELAY vs Distance_km
+# -----------------------------
+ggplot(df, aes(x = Distance_km, y = ARR_DELAY)) +
+  geom_point(alpha = 0.3, color = "darkgreen") +
+  labs(
+    title = "Scatterplot: Arrival Delay vs Distance",
+    x = "Distance (km)",
+    y = "Arrival Delay (min)"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# Load the dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Load library
+library(ggplot2)
+
+# Optional: sample for clarity if dataset is large
+set.seed(1)
+df_sample <- df[sample(nrow(df), 20000), ]
+
+# 1. DEP_DELAY vs ARR_DELAY
+ggplot(df_sample, aes(x = DEP_DELAY, y = ARR_DELAY)) +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  labs(title = "1. Departure Delay vs Arrival Delay", x = "Departure Delay", y = "Arrival Delay") +
+  theme_minimal()
+
+# 2. DEP_DELAY vs Distance_km
+ggplot(df_sample, aes(x = Distance_km, y = DEP_DELAY)) +
+  geom_point(alpha = 0.3, color = "darkgreen") +
+  labs(title = "2. Departure Delay vs Distance", x = "Distance (km)", y = "Departure Delay") +
+  theme_minimal()
+
+# 3. ARR_DELAY vs Distance_km
+ggplot(df_sample, aes(x = Distance_km, y = ARR_DELAY)) +
+  geom_point(alpha = 0.3, color = "purple") +
+  labs(title = "3. Arrival Delay vs Distance", x = "Distance (km)", y = "Arrival Delay") +
+  theme_minimal()
+
+# 4. DEST_LAT vs DEST_LONG
+ggplot(df_sample, aes(x = DEST_LONG, y = DEST_LAT)) +
+  geom_point(alpha = 0.3, color = "orange") +
+  labs(title = "4. DEST_LAT vs DEST_LONG", x = "Longitude", y = "Latitude") +
+  theme_minimal()
+
+# 5. DEST_LAT vs DEP_DELAY
+ggplot(df_sample, aes(x = DEST_LAT, y = DEP_DELAY)) +
+  geom_point(alpha = 0.3, color = "tomato") +
+  labs(title = "5. DEST_LAT vs Departure Delay", x = "Destination Latitude", y = "Departure Delay") +
+  theme_minimal()
+
+# 6. DEP_DELAY vs Pop_Population
+ggplot(df_sample, aes(x = Pop_Population, y = DEP_DELAY)) +
+  geom_point(alpha = 0.3, color = "darkred") +
+  labs(title = "6. Departure Delay vs Destination Population", x = "Population", y = "Departure Delay") +
+  theme_minimal()
+
+# 7. ARR_TIME vs DEP_DELAY
+ggplot(df_sample, aes(x = ARR_TIME, y = DEP_DELAY)) +
+  geom_point(alpha = 0.3, color = "brown") +
+  labs(title = "7. Arrival Time vs Departure Delay", x = "Arrival Time", y = "Departure Delay") +
+  theme_minimal()
+
+# 8. FL_DATE vs DEP_DELAY (convert date to numeric index)
+df_sample$FL_DATE_numeric <- as.numeric(as.Date(df_sample$FL_DATE))
+ggplot(df_sample, aes(x = FL_DATE_numeric, y = DEP_DELAY)) +
+  geom_point(alpha = 0.3, color = "dodgerblue") +
+  labs(title = "8. Date vs Departure Delay", x = "Flight Date (numeric)", y = "Departure Delay") +
+  theme_minimal()
+
+```
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(dbscan)
+library(scales)
+
+# Load your dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Optional: sample for performance
+set.seed(1)
+df_sample <- df[sample(nrow(df), 20000), ]
+
+# Define the plotting function
+plot_dbscan_2d <- function(df, xvar, yvar, eps = 0.5, minPts = 10, title = NULL, color_map = NULL) {
+  sub_df <- df %>%
+    select(all_of(c(xvar, yvar))) %>%
+    na.omit()
+
+  # Standardize the data
+  scaled_data <- scale(sub_df)
+  db <- dbscan(scaled_data, eps = eps, minPts = minPts)
+  sub_df$cluster <- factor(db$cluster)
+
+  ggplot(sub_df, aes_string(x = xvar, y = yvar, color = "cluster")) +
+    geom_point(alpha = 0.4) +
+    labs(title = title, color = "Cluster") +
+    scale_color_manual(values = color_map) +
+    theme_minimal()
+}
+
+# Define colors for up to 5 clusters including outliers (cluster 0)
+color_map <- c("Outlier" = "red", "1" = "blue", "2" = "green", "3" = "purple", "4" = "orange")
+
+# 1. DEP_DELAY vs ARR_DELAY
+plot_dbscan_2d(df_sample, "DEP_DELAY", "ARR_DELAY",
+               title = "1. DBSCAN: DEP_DELAY vs ARR_DELAY",
+               color_map = color_map)
+
+# 2. DEP_DELAY vs Distance_km
+plot_dbscan_2d(df_sample, "Distance_km", "DEP_DELAY",
+               title = "2. DBSCAN: DEP_DELAY vs Distance",
+               color_map = color_map)
+
+# 3. ARR_DELAY vs Distance_km
+plot_dbscan_2d(df_sample, "Distance_km", "ARR_DELAY",
+               title = "DBSCAN: ARR_DELAY vs Distance",
+               color_map = color_map)
+
+# 4. DEST_LAT vs DEST_LONG
+plot_dbscan_2d(df_sample, "DEST_LONG", "DEST_LAT",
+               title = "4. DBSCAN: DEST_LAT vs DEST_LONG",
+               color_map = color_map)
+
+# 5. DEST_LAT vs DEP_DELAY
+plot_dbscan_2d(df_sample, "DEST_LAT", "DEP_DELAY",
+               title = "5. DBSCAN: DEST_LAT vs DEP_DELAY",
+               color_map = color_map)
+
+# 6. DEP_DELAY vs Pop_Population
+plot_dbscan_2d(df_sample, "Pop_Population", "DEP_DELAY",
+               title = "6. DBSCAN: DEP_DELAY vs Population",
+               color_map = color_map)
+
+# 7. ARR_TIME vs DEP_DELAY
+plot_dbscan_2d(df_sample, "ARR_TIME", "DEP_DELAY",
+               title = "7. DBSCAN: ARR_TIME vs DEP_DELAY",
+               color_map = color_map)
+
+# 8. FL_DATE vs DEP_DELAY (convert date to numeric index first)
+df_sample$FL_DATE_numeric <- as.numeric(as.Date(df_sample$FL_DATE))
+plot_dbscan_2d(df_sample, "FL_DATE_numeric", "DEP_DELAY",
+               title = "8. DBSCAN: FL_DATE vs DEP_DELAY",
+               color_map = color_map)
+
+```
+```{r}
+# Load packages
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(MASS)  # for mahalanobis()
+
+# Load dataset
+df <- read.csv("3_Flights_Distance_Weather_Population.csv")
+
+# Clean time column
+df <- df[!is.na(df$ARR_TIME), ]
+df$ARR_TIME_str <- sprintf("%04d", df$ARR_TIME)
+df$ARR_HOUR <- as.numeric(substr(df$ARR_TIME_str, 1, 2))
+df$ARR_MIN <- as.numeric(substr(df$ARR_TIME_str, 3, 4))
+df$hour_bin <- floor(df$ARR_HOUR / 2) * 2
+df$hour_label <- paste0(sprintf("%02d", df$hour_bin), ":00-", sprintf("%02d", df$hour_bin + 2), ":00")
+
+# Filter relevant columns
+df_sub <- df %>%
+  dplyr::select(hour_label, DEP_DELAY, Distance_km, precipitation_mm) %>%
+  filter(!is.na(DEP_DELAY), !is.na(Distance_km), !is.na(precipitation_mm))
+
+# Function to compute Mahalanobis anomaly scores per time window
+detect_mahalanobis_anomalies <- function(data, alpha = 0.99) {
+  grouped <- data %>% group_by(hour_label) %>% group_split()
+  
+  result_list <- lapply(grouped, function(group) {
+    X <- as.matrix(group[, c("DEP_DELAY", "Distance_km", "precipitation_mm")])
+    center <- colMeans(X)
+    cov_matrix <- cov(X)
+    
+    # Avoid singularity
+    if (det(cov_matrix) == 0) return(NULL)
+    
+    dists <- mahalanobis(X, center, cov_matrix)
+    cutoff <- qchisq(alpha, df = ncol(X))  # Chi-squared threshold
+    group$mahalanobis_dist <- dists
+    group$anomaly <- dists > cutoff
+    return(group)
+  })
+  
+  bind_rows(result_list)
+}
+
+# Run anomaly detection
+maha_out <- detect_mahalanobis_anomalies(df_sub)
+
+# Plotting
+ggplot(maha_out, aes(x = hour_label, y = mahalanobis_dist, color = anomaly)) +
+  geom_jitter(alpha = 0.6, width = 0.3) +
+  geom_hline(yintercept = qchisq(0.99, df = 3), linetype = "dashed", color = "red") +
+  scale_color_manual(values = c("black", "red")) +
+  labs(
+    title = "Mahalanobis Distance for Flights by 2-Hour Arrival Window",
+    subtitle = "Red = Anomalous Flight Instances (99% threshold)",
+    x = "2-Hour Time Window", y = "Mahalanobis Distance"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+# Load libraries
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(MASS)  # for mahalanobis()
+
+# Load dataset
+df <- read.csv("3_Flights_Distance_Weather_Population.csv")
+
+# Clean ARR_TIME and create 4-hour bins
+df <- df[!is.na(df$ARR_TIME), ]
+df$ARR_TIME_str <- sprintf("%04d", df$ARR_TIME)
+df$ARR_HOUR <- as.numeric(substr(df$ARR_TIME_str, 1, 2))
+df$ARR_MIN <- as.numeric(substr(df$ARR_TIME_str, 3, 4))
+df$hour_bin <- floor(df$ARR_HOUR / 4) * 4
+df$hour_label <- paste0(sprintf("%02d", df$hour_bin), ":00-", sprintf("%02d", df$hour_bin + 4), ":00")
+
+# Subset relevant and complete data
+df_sub <- df %>%
+  dplyr::select(hour_label, DEP_DELAY, Distance_km, precipitation_mm) %>%
+  filter(!is.na(DEP_DELAY), !is.na(Distance_km), !is.na(precipitation_mm))
+
+# Function for Mahalanobis anomaly detection per group
+detect_mahalanobis_anomalies <- function(data, alpha = 0.99) {
+  grouped <- data %>% group_by(hour_label) %>% group_split()
+  
+  result_list <- lapply(grouped, function(group) {
+    X <- as.matrix(group[, c("DEP_DELAY", "Distance_km", "precipitation_mm")])
+    center <- colMeans(X)
+    cov_matrix <- cov(X)
+    
+    # Avoid singular matrix issues
+    if (det(cov_matrix) == 0) return(NULL)
+    
+    dists <- mahalanobis(X, center, cov_matrix)
+    cutoff <- qchisq(alpha, df = ncol(X))
+    group$mahalanobis_dist <- dists
+    group$anomaly <- dists > cutoff
+    return(group)
+  })
+  
+  bind_rows(result_list)
+}
+
+# Run detection
+maha_out <- detect_mahalanobis_anomalies(df_sub)
+
+# Plot
+ggplot(maha_out, aes(x = hour_label, y = mahalanobis_dist, color = anomaly)) +
+  geom_jitter(alpha = 0.6, width = 0.3) +
+  geom_hline(yintercept = qchisq(0.99, df = 3), linetype = "dashed", color = "red") +
+  scale_color_manual(values = c("black", "red")) +
+  labs(
+    title = "Mahalanobis Distance for Flights by 4-Hour Arrival Window",
+    subtitle = "Red = Anomalous Flight Instances (99% threshold)",
+    x = "4-Hour Time Window", y = "Mahalanobis Distance"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+# Load packages
+library(dplyr)
+library(ggplot2)
+
+# Load dataset
+df <- read.csv("3_Flights_Distance_Weather_Population.csv")
+
+# Parse time (ensure ARR_TIME is formatted)
+df <- df[!is.na(df$ARR_TIME), ]
+df$ARR_TIME_str <- sprintf("%04d", df$ARR_TIME)
+df$ARR_HOUR <- as.numeric(substr(df$ARR_TIME_str, 1, 2))
+
+# Function to label time into bins
+label_hours <- function(hour, bin_size) {
+  bin_start <- floor(hour / bin_size) * bin_size
+  bin_end <- (bin_start + bin_size) %% 24
+  sprintf("%02d:00-%02d:00", bin_start, bin_end)
+}
+
+# Function to apply Mahalanobis anomaly detection per bin size
+detect_and_plot <- function(bin_size) {
+  df$hour_label <- label_hours(df$ARR_HOUR, bin_size)
+  
+  df_sub <- df %>%
+    dplyr::select(hour_label, DEP_DELAY, Distance_km, precipitation_mm) %>%
+    filter(!is.na(DEP_DELAY), !is.na(Distance_km), !is.na(precipitation_mm))
+  
+  grouped <- df_sub %>% group_by(hour_label) %>% group_split()
+  
+  detect_mahalanobis_anomalies <- function(data, alpha = 0.99) {
+    lapply(data, function(group) {
+      X <- as.matrix(group[, c("DEP_DELAY", "Distance_km", "precipitation_mm")])
+      center <- colMeans(X)
+      cov_matrix <- cov(X)
+      if (det(cov_matrix) == 0) return(NULL)
+      dists <- mahalanobis(X, center, cov_matrix)
+      cutoff <- qchisq(alpha, df = ncol(X))
+      group$mahalanobis_dist <- dists
+      group$anomaly <- dists > cutoff
+      return(group)
+    }) %>% bind_rows()
+  }
+  
+  maha_out <- detect_mahalanobis_anomalies(grouped)
+  
+  p <- ggplot(maha_out, aes(x = hour_label, y = mahalanobis_dist, color = anomaly)) +
+    geom_jitter(alpha = 0.6, width = 0.3) +
+    geom_hline(yintercept = qchisq(0.99, df = 3), linetype = "dashed", color = "red") +
+    scale_color_manual(values = c("black", "red")) +
+    labs(
+      title = paste0("Mahalanobis Distance for Flights by ", bin_size, "-Hour Arrival Window"),
+      subtitle = "Red = Anomalous Flight Instances (99% threshold)",
+      x = paste0(bin_size, "-Hour Time Window"),
+      y = "Mahalanobis Distance"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(p)
+}
+
+# Run for each granularity
+detect_and_plot(6)
+detect_and_plot(8)
+detect_and_plot(12)
+detect_and_plot(24)
+
+```
+
+```{r}
+# Assuming df is your data frame and ARR_DELAY is a numeric column
+Q1 <- quantile(df$ARR_DELAY, 0.25, na.rm = TRUE)
+Q3 <- quantile(df$ARR_DELAY, 0.75, na.rm = TRUE)
+IQR_value <- Q3 - Q1
+
+lower_bound <- Q1 - 3 * IQR_value
+upper_bound <- Q3 + 3 * IQR_value
+
+# Count of potential outliers
+outliers <- df$ARR_DELAY < lower_bound | df$ARR_DELAY > upper_bound
+num_outliers <- sum(outliers, na.rm = TRUE)
+
+cat("Q1:", Q1, "\nQ3:", Q3, "\nIQR:", IQR_value, "\n# of Potential Outliers:", num_outliers)
+```
+
+```{r}
+# IQR test for ARR_DELAY_NEW
+Q1 <- quantile(df$ARR_DELAY_NEW, 0.25, na.rm = TRUE)
+Q3 <- quantile(df$ARR_DELAY_NEW, 0.75, na.rm = TRUE)
+IQR_value <- Q3 - Q1
+
+lower_bound <- Q1 - 1.5 * IQR_value
+upper_bound <- Q3 + 1.5 * IQR_value
+
+# Identify outliers
+outliers <- df$ARR_DELAY_NEW < lower_bound | df$ARR_DELAY_NEW > upper_bound
+num_outliers <- sum(outliers, na.rm = TRUE)
+
+cat("Q1:", Q1, "\nQ3:", Q3, "\nIQR:", IQR_value, "\n# of Potential Outliers:", num_outliers)
+
+```
+
+```{r}
+# Load dataset
+df <- read.csv("3_Flights_Distance_Weather_Population.csv")
+
+# Convert to lowercase for case-insensitive matching
+df$city_origin <- tolower(df$city_origin)
+df$city_dest <- tolower(df$city_dest)
+
+# Count flights FROM Guam
+guam_from <- sum(df$city_origin == "guam", na.rm = TRUE)
+
+# Count flights TO Guam
+guam_to <- sum(df$city_dest == "guam", na.rm = TRUE)
+
+# Print results
+cat("Flights FROM Guam:", guam_from, "\n")
+cat("Flights TO Guam:", guam_to, "\n")
+
+```
+```{r}
+# Load the data
+df <- read.csv("3_Flights_Distance_Weather_Population.csv")
+
+# Remove missing values from the column
+pop <- na.omit(df$Pop_Population)
+
+# Calculate quartiles and IQR
+Q1 <- quantile(pop, 0.25)
+Q3 <- quantile(pop, 0.75)
+IQR_val <- IQR(pop)
+
+# Define bounds for outliers
+lower_bound <- Q1 - 3 * IQR_val
+upper_bound <- Q3 + 3 * IQR_val
+
+# Identify outliers
+outliers <- pop[pop < lower_bound | pop > upper_bound]
+
+# Output results
+cat("Q1:", Q1, "\n")
+cat("Q3:", Q3, "\n")
+cat("IQR:", IQR_val, "\n")
+cat("Lower Bound:", lower_bound, "\n")
+cat("Upper Bound:", upper_bound, "\n")
+cat("Number of Outliers:", length(outliers), "\n")
+
+```
+
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(dbscan)
+library(scales)
+
+# Load your dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Optional: sample for performance
+set.seed(1)
+df_sample <- df  # Use full dataset
+
+
+# Convert delays to hours
+df_sample$DEP_DELAY_HOURS <- df_sample$DEP_DELAY / 60
+df_sample$ARR_DELAY_HOURS <- df_sample$ARR_DELAY / 60
+
+# ------------------- Delay Grouping -------------------
+# Mutually exclusive delay categories
+delay_2_to_3h <- df_sample %>% filter(DEP_DELAY_HOURS > 2 & DEP_DELAY_HOURS <= 3)
+delay_over_3h <- df_sample %>% filter(DEP_DELAY_HOURS > 3)
+
+cat("🔹 Flights with departure delay > 2 and ≤ 3 hours:", nrow(delay_2_to_3h), "\n")
+cat("🔹 Flights with departure delay > 3 hours:", nrow(delay_over_3h), "\n")
+
+# ------------------- Distance Grouping -------------------
+# Mutually exclusive distance categories
+short_haul  <- df_sample %>% filter(Distance_km <= 1500)
+medium_haul <- df_sample %>% filter(Distance_km > 1500 & Distance_km <= 3500)
+long_haul   <- df_sample %>% filter(Distance_km > 3500)
+
+cat("🔸 Short-haul (≤1500 km):", nrow(short_haul), "\n")
+cat("🔸 Medium-haul (1500–3500 km):", nrow(medium_haul), "\n")
+cat("🔸 Long-haul (>3500 km):", nrow(long_haul), "\n")
+
+# ------------------- Cross Tab: Delay > 3h by Distance -------------------
+delay_over_3h_breakdown <- delay_over_3h %>%
+  mutate(distance_band = case_when(
+    Distance_km <= 1500 ~ "Short-haul",
+    Distance_km > 1500 & Distance_km <= 3500 ~ "Medium-haul",
+    Distance_km > 3500 ~ "Long-haul"
+  )) %>%
+  group_by(distance_band) %>%
+  summarise(n = n())
+
+print(delay_over_3h_breakdown)
+
+# ------------------- Optional: DBSCAN Visualizations -------------------
+plot_dbscan_2d <- function(df, xvar, yvar, eps = 0.5, minPts = 10, 
+                           title = NULL, color_map = NULL, 
+                           xlab = NULL, ylab = NULL, y_is_minutes = FALSE) {
+  sub_df <- df[, c(xvar, yvar)]
+  sub_df <- na.omit(sub_df)
+  scaled_data <- scale(sub_df)
+  db <- dbscan(scaled_data, eps = eps, minPts = minPts)
+  sub_df$cluster <- as.character(db$cluster)
+  sub_df$cluster[sub_df$cluster == "0"] <- "Outlier"
+  
+  p <- ggplot(sub_df, aes_string(x = xvar, y = yvar, color = "cluster")) +
+    geom_point(alpha = 0.4) +
+    labs(title = title, color = "Cluster", x = xlab, y = ylab) +
+    scale_color_manual(values = color_map) +
+    theme_minimal()
+
+  if (y_is_minutes) {
+    max_hour <- ceiling(max(sub_df[[yvar]], na.rm = TRUE) / 60)
+    p <- p + scale_y_continuous(
+      breaks = seq(0, max_hour, by = 1) * 60,
+      labels = seq(0, max_hour, by = 1)
+    )
+  }
+
+  return(p)
+}
+
+# Define DBSCAN color map
+color_map <- c("Outlier" = "red", "1" = "blue", "2" = "green", "3" = "purple", "4" = "orange")
+
+# Example DBSCAN plot
+plot_dbscan_2d(df_sample, "Distance_km", "DEP_DELAY",
+               title = "DBSCAN: Departure Delay vs Distance",
+               color_map = color_map,
+               xlab = "Distance in KM",
+               ylab = "Departure Delay (hours)",
+               y_is_minutes = TRUE)
+
+```
+
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(dbscan)
+library(scales)
+
+# Load your dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Optional: sample for performance
+set.seed(1)
+df_sample <- df[sample(nrow(df), 20000), ]
+
+# Convert delays to hours
+df_sample$DEP_DELAY_HOURS <- df_sample$DEP_DELAY / 60
+df_sample$ARR_DELAY_HOURS <- df_sample$ARR_DELAY / 60
+
+# ------------------- Delay Grouping -------------------
+# Mutually exclusive delay categories
+delay_2_to_3h <- df_sample %>% filter(DEP_DELAY_HOURS > 2 & DEP_DELAY_HOURS <= 3)
+delay_over_3h <- df_sample %>% filter(DEP_DELAY_HOURS > 3)
+delay_over_5h <- df_sample %>% filter(DEP_DELAY_HOURS > 5)
+
+cat("🔹 Flights with departure delay > 2 and ≤ 3 hours:", nrow(delay_2_to_3h), "\n")
+cat("🔹 Flights with departure delay > 3 hours:", nrow(delay_over_3h), "\n")
+cat("🔹 Flights with departure delay > 5 hours:", nrow(delay_over_5h), "\n")
+
+# ------------------- Distance Grouping -------------------
+# Mutually exclusive distance categories
+short_haul  <- df_sample %>% filter(Distance_km <= 1500)
+medium_haul <- df_sample %>% filter(Distance_km > 1500 & Distance_km <= 3500)
+long_haul   <- df_sample %>% filter(Distance_km > 3500)
+
+cat("🔸 Short-haul (≤1500 km):", nrow(short_haul), "\n")
+cat("🔸 Medium-haul (1500–3500 km):", nrow(medium_haul), "\n")
+cat("🔸 Long-haul (>3500 km):", nrow(long_haul), "\n")
+
+# ------------------- Cross Tab of Delay (2–3h and >3h) by Distance -------------------
+# Function to tag delay category
+df_sample <- df_sample %>%
+  mutate(delay_band = case_when(
+    DEP_DELAY_HOURS > 2 & DEP_DELAY_HOURS <= 3 ~ "Between 2 and 3 Hours",
+    DEP_DELAY_HOURS > 3 ~ "3 Hours and More",
+    TRUE ~ NA_character_
+  ),
+  distance_band = case_when(
+    Distance_km <= 1500 ~ "≤ 1500 km",
+    Distance_km <= 3500 ~ "1500 – 3500 km",
+    Distance_km > 3500 ~ "> 3500 km"
+  ))
+
+# Filter to only delay-qualifying flights
+df_delay_band <- df_sample %>%
+  filter(!is.na(delay_band)) %>%
+  group_by(delay_band, distance_band) %>%
+  summarise(n = n(), .groups = "drop")
+
+# Create summary table (for Word-style formatting)
+df_pivot <- tidyr::pivot_wider(
+  df_delay_band,
+  names_from = distance_band,
+  values_from = n,
+  values_fill = 0
+)
+
+# Add row and column totals
+df_pivot <- df_pivot %>%
+  mutate(`Total (By Delay)` = rowSums(across(where(is.numeric)))) %>%
+  bind_rows(
+    summarise(across(where(is.numeric), sum)) %>%
+      mutate(`delay_band` = "Total (By Distance)")
+)
+
+print(df_pivot)
+
+```
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+
+# Load data
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Filter out NAs
+df_clean <- df %>% filter(!is.na(DEP_DELAY), !is.na(ARR_DELAY))
+
+# Calculate correlation
+correlation <- cor(df_clean$DEP_DELAY, df_clean$ARR_DELAY, method = "pearson")
+cat("Pearson correlation between DEP_DELAY and ARR_DELAY:", round(correlation, 3), "\n")
+
+# Plot relationship
+ggplot(df_clean, aes(x = DEP_DELAY, y = ARR_DELAY)) +
+  geom_point(alpha = 0.3, color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(
+    title = "Relationship Between Departure Delay and Arrival Delay",
+    x = "Departure Delay (minutes)",
+    y = "Arrival Delay (minutes)",
+    caption = paste("Pearson correlation:", round(correlation, 3))
+  ) +
+  theme_minimal()
+
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Load your dataset
+df <- read.csv("5_Flights_Distance_Population_Weather.csv")
+
+# Preview column names to verify actual naming
+print(colnames(df))
+
+# Filter and clean relevant data (ensure column names match your dataset)
+df_clean <- df %>%
+  filter(!is.na(DEP_DELAY), !is.na(ARR_DELAY), !is.na(Origin), !is.na(Dest)) %>%
+  mutate(
+    DEP_DELAY_HOURS = DEP_DELAY / 60,
+    ARR_DELAY_HOURS = ARR_DELAY / 60,
+    route = paste(Origin, "→", Dest)
+  )
+
+# Count how many flights on each route are delayed > 3 hours
+route_delay_summary <- df_clean %>%
+  filter(DEP_DELAY_HOURS > 3) %>%
+  group_by(route) %>%
+  summarise(
+    num_flights_delayed = n(),
+    avg_dep_delay_hr = mean(DEP_DELAY_HOURS, na.rm = TRUE),
+    avg_arr_delay_hr = mean(ARR_DELAY_HOURS, na.rm = TRUE)
+  ) %>%
+  arrange(desc(num_flights_delayed))
+
+# Show top 10 most delay-prone routes
+print(head(route_delay_summary, 10))
+
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Load dataset
+df <- read.csv("X_Flights_Distance_Weather.csv")
+
+# Create route identifier
+df$route <- paste(df$city_origin, "to", df$city_dest)
+
+# Filter for flights with delay > 3 hours and not cancelled
+long_delay_routes <- df %>%
+  filter(!is.na(DEP_DELAY), DEP_DELAY > 180, cancelled == 0) %>%
+  group_by(route) %>%
+  summarise(long_delays = n(), .groups = "drop")
+
+# Get total flights per route
+total_routes <- df %>%
+  group_by(route) %>%
+  summarise(total_flights = n(), .groups = "drop")
+
+# Join and filter for problematic routes
+route_delay_proportion <- long_delay_routes %>%
+  inner_join(total_routes, by = "route") %>%
+  mutate(prop_delayed = long_delays / total_flights) %>%
+  filter(prop_delayed >= 0.05, total_flights >= 100) %>%
+  arrange(desc(prop_delayed))
+
+# Extract origin and destination cities from filtered routes
+df_problematic <- df %>%
+  filter(paste(city_origin, "to", city_dest) %in% route_delay_proportion$route)
+
+# Combine origin and destination city counts
+city_counts <- df_problematic %>%
+  select(city_origin, city_dest) %>%
+  pivot_longer(cols = everything(), values_to = "city") %>%
+  count(city, sort = TRUE)
+
+# Plot histogram
+ggplot(city_counts, aes(x = reorder(city, n), y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "City Frequency in Problematic Routes",
+    x = "City (Origin or Destination)",
+    y = "Count of Occurrence in Problematic Routes"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# Filter long delayed flights only
+long_delayed_flights <- df %>%
+  filter(!is.na(DEP_DELAY), DEP_DELAY > 180, cancelled == 0)
+
+# Summarize common features
+summary_vars <- long_delayed_flights %>%
+  summarise(
+    avg_precipitation = mean(precipitation_mm, na.rm = TRUE),
+    most_common_origin = names(sort(table(city_origin), decreasing = TRUE))[1],
+    most_common_dest = names(sort(table(city_dest), decreasing = TRUE))[1],
+    avg_distance = mean(Distance_km, na.rm = TRUE),
+    avg_arr_delay = mean(ARR_DELAY_NEW, na.rm = TRUE)
+  )
+
+print(summary_vars)
+
+```
+
+```{r}
+library(dplyr)
+
+# Load your dataset
+df <- read.csv("X_Flights_Distance_Weather.csv")
+
+# Create a unique route identifier
+df$route <- paste(df$city_origin, "to", df$city_dest)
+
+# Group by route and count number of flights per route
+route_counts <- df %>%
+  group_by(route) %>%
+  summarise(total_flights = n())
+
+# Calculate summary statistics
+avg_flights_per_route <- mean(route_counts$total_flights)
+sd_flights_per_route <- sd(route_counts$total_flights)
+var_flights_per_route <- var(route_counts$total_flights)
+
+# Print results
+cat("📊 Average flights per route:", round(avg_flights_per_route, 2), "\n")
+cat("📈 Standard deviation:", round(sd_flights_per_route, 2), "\n")
+cat("📉 Variance:", round(var_flights_per_route, 2), "\n")
+
+```
+
